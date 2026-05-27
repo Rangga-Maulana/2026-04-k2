@@ -479,7 +479,7 @@ impl MockAMMOracle {
 // PoC EXPLOIT EXECUTION
 // =============================================================================
 #[test]
-fn test_submission_validity() {
+fn test_E2E_PoC() {
     let env = Env::default();
     let setup = Setup::new(&env);
 
