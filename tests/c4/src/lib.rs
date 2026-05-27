@@ -557,7 +557,7 @@ fn test_withdrawal_penalty_logic_flaw_real_state() {
     std::println!("[!] Expected Accrued Rewards          : > {}", expected_rewards);
     
     if user_reward_data.accrued == 0 {
-        std::println!("[!] CRITICAL IMPACT VERIFIED: 100% loss of yield due to post-action snapshotting flaw.");
+        std::println!("[!] IMPACT VERIFIED: 100% loss of yield due to post-action snapshotting flaw.");
     }
 
     // Strict assertion to validate the vulnerability
