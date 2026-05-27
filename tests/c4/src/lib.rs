@@ -604,84 +604,54 @@ fn test_submission_validity() {
     );
 
     // =============================================================================
-// MOCK INCENTIVES CONTRACT (DILETAKKAN DI LUAR FUNGSI TEST AGAR TIDAK ERROR SCOPE)
-// =============================================================================
-// =============================================================================
-// Mock Reflector oracle — (KODE BAWAAN ASLI, JANGAN DIHAPUS)
-// =============================================================================
-use soroban_sdk::{contract, contractimpl};
-
-#[contract]
-pub struct MockReflector;
-#[contractimpl]
-impl MockReflector {
-    pub fn decimals(_env: Env) -> u32 {
-        14
-    }
-}
-
-// =============================================================================
-// WARDEN: MOCK INCENTIVES KITA TARUH DI SINI AGAR TIDAK ERROR
-// =============================================================================
-#[contract]
-pub struct MockIncentives;
-
-#[contractimpl]
-impl MockIncentives {
-    pub fn handle_action(
-        env: Env,
-        _token_address: Address,
-        _user: Address,
-        _total_supply: u128,
-        user_balance: u128,
-        _reward_type: u32,
-    ) {
-        env.storage().instance().set(&Symbol::new(&env, "intercepted"), &user_balance);
-    }
-
-    pub fn get_intercepted_balance(env: Env) -> u128 {
-        env.storage().instance().get(&Symbol::new(&env, "intercepted")).unwrap_or(0)
-    }
-}
-
-// =============================================================================
-// PoC EXPLOIT EXECUTION
+// PoC EXPLOIT EXECUTION: 100% YIELD DESTRUCTION (REAL STATE)
 // =============================================================================
 #[test]
-fn test_withdrawal_penalty_logic_flaw() {
-    let env = Env::default();
-    
-    // Setup::new sudah otomatis memanggil env.mock_all_auths() di dalamnya
+fn test_withdrawal_penalty_logic_flaw_real_state() {
+    let env = soroban_sdk::Env::default();
     let setup = Setup::new(&env);
+    
+    // Override auth for injection
+    env.mock_all_auths();
 
     std::println!("\n===============================================");
-    std::println!("[+] PHASE 1: SETUP & MOCK INJECTION");
+    std::println!("[+] PHASE 1: REAL INCENTIVES DEPLOYMENT & SETUP");
     std::println!("===============================================");
 
-    // 1. Registrasi Mock Incentives
-    let mock_incentives_addr = env.register(MockIncentives, ());
+    // 1. Deploy the actual Incentives WASM (No Mocks)
+    let incentives_addr = env.register(incentives::WASM, ());
+    let incentives_client = incentives::Client::new(&env, &incentives_addr);
+    incentives_client.initialize(&setup.admin, &setup.router_addr);
 
-    // 2. Dapatkan alamat DebtToken untuk Asset B langsung dari struct Setup
-    let debt_token_addr = setup.debt_token_b.clone();
+    // 2. Configure Rewards for Borrowing Asset B
+    let reward_token = setup.asset_a.clone(); // Using Asset A as the payout token
+    let emission_rate = 1000u128; // 1000 tokens per second
     
-    // 3. Suntikkan Mock Incentives ke dalam DebtToken Asset B menggunakan Raw Invoke
-    env.invoke_contract::<()>(
-        &debt_token_addr,
-        &Symbol::new(&env, "set_incentives_contract"),
-        vec![&env, setup.router_addr.to_val(), mock_incentives_addr.to_val()],
+    incentives_client.configure_asset_rewards(
+        &setup.admin,
+        &setup.debt_token_b, // Asset parameter = token calling handle_action
+        &reward_token,
+        1u32,                // REWARD_TYPE_BORROW
+        &emission_rate,
+        &0u64,               // No distribution end
     );
 
-    std::println!("[*] Mock Incentives Controller injected successfully.");
+    // 3. Inject Real Incentives into DebtToken Asset B
+    env.invoke_contract::<()>(
+        &setup.debt_token_b,
+        &soroban_sdk::Symbol::new(&env, "set_incentives_contract"),
+        soroban_sdk::vec![&env, setup.router_addr.to_val(), incentives_addr.to_val()],
+    );
+
+    std::println!("[*] Real Incentives Contract deployed and wired.");
 
     std::println!("\n===============================================");
-    std::println!("[+] PHASE 2: USER BORROWS (BEFORE EXPLOIT)");
+    std::println!("[+] PHASE 2: NORMAL FLOW (DEPOSIT & BORROW)");
     std::println!("===============================================");
     
-    // User Deposit Kolateral (Asset A)
     let deposit: u128 = 10_000_000_000; 
     setup.router.supply(&setup.user, &setup.asset_a, &deposit, &setup.user, &0u32);
 
-    // User Meminjam (Borrow) Asset B
     let borrow_amount: u128 = 5_000_000_000;
     setup.router.borrow(
         &setup.user,
@@ -691,25 +661,32 @@ fn test_withdrawal_penalty_logic_flaw() {
         &0u32, 
         &setup.user,
     );
-
-    // Memeriksa saldo yang dikirim ke Incentives saat posisi Borrow dibuka
-    let balance_sent_on_borrow: u128 = env.invoke_contract(
-        &mock_incentives_addr,
-        &Symbol::new(&env, "get_intercepted_balance"),
-        vec![&env],
-    );
-    
-    std::println!("[*] User Borrowed Asset B : {}", borrow_amount);
-    std::println!("[*] Balance sent to Incentives (Mint) : {}", balance_sent_on_borrow);
-    
-    assert_eq!(balance_sent_on_borrow, borrow_amount, "Mint should send borrowed balance");
+    std::println!("[*] User borrowed {} units of Asset B.", borrow_amount);
 
     std::println!("\n===============================================");
-    std::println!("[+] PHASE 3: USER REPAYS (THE BUG TRIGGER)");
+    std::println!("[+] PHASE 3: TIME TRAVEL (ACCRUING YIELD)");
     std::println!("===============================================");
-    std::println!("[*] Time passed... User decides to repay their debt in full.");
 
-    // User melunasi seluruh hutangnya (Burn)
+    // Advance the Soroban ledger by 1 Year (31,536,000 seconds)
+    let current_timestamp = env.ledger().timestamp();
+    let one_year = 31_536_000;
+    
+    // Simulate time passing to accrue massive rewards
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        timestamp: current_timestamp + one_year,
+        sequence_number: env.ledger().sequence() + 10000,
+        ..env.ledger().get()
+    });
+
+    let expected_rewards = emission_rate * (one_year as u128);
+    std::println!("[*] Fast forwarded 1 year. Protocol owes user ~{} in rewards.", expected_rewards);
+
+    std::println!("\n===============================================");
+    std::println!("[+] PHASE 4: THE PENALTY TRIGGER (REPAY)");
+    std::println!("===============================================");
+    std::println!("[*] User executes a full repayment to claim their 1-year yield.");
+
+    // User repays debt. This triggers `handle_action` with a new balance of 0.
     setup.router.repay(
         &setup.user,
         &setup.asset_b,
@@ -718,35 +695,28 @@ fn test_withdrawal_penalty_logic_flaw() {
         &setup.user,
     );
 
-    // VULNERABILITY TERBUKTI: Memeriksa saldo yang dikirim saat Repay
-    let balance_sent_on_repay: u128 = env.invoke_contract(
-        &mock_incentives_addr,
-        &Symbol::new(&env, "get_intercepted_balance"),
-        vec![&env],
-    );
-    std::println!("[!] Balance sent to Incentives (Burn) : {} (POST-ACTION BALANCE!)", balance_sent_on_repay);
-
     std::println!("\n===============================================");
-    std::println!("[+] POST-MORTEM STATE (IMPACT ANALYSIS)");
+    std::println!("[+] PHASE 5: POST-MORTEM STATE FORENSICS");
     std::println!("===============================================");
     
-    let old_balance = balance_sent_on_borrow;
-    let new_balance = balance_sent_on_repay;
-    
-    std::println!("[!] The real IncentivesContract calculates rewards using:");
-    std::println!("[!] balance_for_rewards = min(old_balance, new_balance)");
-    
-    let balance_for_rewards = old_balance.min(new_balance);
-    
-    std::println!("[!] Math execution : min({}, {}) = {}", old_balance, new_balance, balance_for_rewards);
-    std::println!("[!] CRITICAL IMPACT: User earns rewards based on a balance of {}.", balance_for_rewards);
-    std::println!("[!] 100% of the rewards accrued during the holding period are permanently LOST.");
-    std::println!("===============================================\n");
-    
-    // Assertion final
-    assert_eq!(balance_sent_on_repay, 0, "Bug fixed? Expected 0 balance sent to incentives.");
-}
+    // Read the exact state from the deployed Incentives contract
+    let user_reward_data = incentives_client.get_user_reward_data(
+        &setup.debt_token_b,
+        &reward_token,
+        &setup.user,
+        &1u32, // REWARD_TYPE_BORROW
+    );
 
+    std::println!("[!] Accrued Rewards in Contract State : {}", user_reward_data.accrued);
+    std::println!("[!] Expected Accrued Rewards          : > {}", expected_rewards);
+    
+    if user_reward_data.accrued == 0 {
+        std::println!("[!] CRITICAL IMPACT VERIFIED: 100% loss of yield due to post-action snapshotting flaw.");
+    }
+
+    // Strict assertion to validate the vulnerability
+    assert_eq!(user_reward_data.accrued, 0, "Exploit Failed: Rewards were not wiped.");
+}
     // ---------- WARDEN: add your PoC below this line ----------
     //
     // Example skeleton:
