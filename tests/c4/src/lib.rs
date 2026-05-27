@@ -606,8 +606,23 @@ fn test_submission_validity() {
     // =============================================================================
 // MOCK INCENTIVES CONTRACT (DILETAKKAN DI LUAR FUNGSI TEST AGAR TIDAK ERROR SCOPE)
 // =============================================================================
-use soroban_sdk::vec;
+// =============================================================================
+// Mock Reflector oracle — (KODE BAWAAN ASLI, JANGAN DIHAPUS)
+// =============================================================================
+use soroban_sdk::{contract, contractimpl};
 
+#[contract]
+pub struct MockReflector;
+#[contractimpl]
+impl MockReflector {
+    pub fn decimals(_env: Env) -> u32 {
+        14
+    }
+}
+
+// =============================================================================
+// WARDEN: MOCK INCENTIVES KITA TARUH DI SINI AGAR TIDAK ERROR
+// =============================================================================
 #[contract]
 pub struct MockIncentives;
 
@@ -621,11 +636,11 @@ impl MockIncentives {
         user_balance: u128,
         _reward_type: u32,
     ) {
-        env.storage().instance().set(&Symbol::new(&env, "intercepted_balance"), &user_balance);
+        env.storage().instance().set(&Symbol::new(&env, "intercepted"), &user_balance);
     }
 
     pub fn get_intercepted_balance(env: Env) -> u128 {
-        env.storage().instance().get(&Symbol::new(&env, "intercepted_balance")).unwrap_or(0)
+        env.storage().instance().get(&Symbol::new(&env, "intercepted")).unwrap_or(0)
     }
 }
 
