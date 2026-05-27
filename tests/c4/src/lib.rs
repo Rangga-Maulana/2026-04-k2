@@ -606,6 +606,9 @@ fn test_submission_validity() {
     // =============================================================================
 // MOCK INCENTIVES CONTRACT: Intercepts and proves the Post-Action Balance bug
 // =============================================================================
+// =============================================================================
+// MOCK INCENTIVES CONTRACT: Intercepts and proves the Post-Action Balance bug
+// =============================================================================
 #[contract]
 pub struct MockIncentives;
 
@@ -646,11 +649,10 @@ fn test_withdrawal_penalty_logic_flaw() {
 
     // 1. Registrasi Mock Incentives
     let mock_incentives_addr = env.register(MockIncentives, ());
-    let mock_client = MockIncentivesClient::new(&env, &mock_incentives_addr);
 
-    // Dapatkan alamat DebtToken untuk Asset B
+    // FIX: Menggunakan 'debt_token_address' (K2 naming convention)
     let reserve_data = setup.router.get_reserve_data(&setup.asset_b);
-    let debt_token_addr = reserve_data.variable_debt_token_address;
+    let debt_token_addr = reserve_data.debt_token_address;
     
     // Suntikkan Mock Incentives ke dalam DebtToken Asset B
     // Membutuhkan caller = pool_address (setup.router.address)
@@ -681,8 +683,13 @@ fn test_withdrawal_penalty_logic_flaw() {
         &setup.user,
     );
 
-    // Memeriksa saldo yang dikirim ke Incentives saat posisi Borrow dibuka
-    let balance_sent_on_borrow = mock_client.get_intercepted_balance();
+    // FIX: Bypass Macro Client, gunakan invoke_contract mentah (100% aman dari scoping error)
+    let balance_sent_on_borrow: u128 = env.invoke_contract(
+        &mock_incentives_addr,
+        &Symbol::new(&env, "get_intercepted_balance"),
+        soroban_sdk::vec![&env],
+    );
+    
     std::println!("[*] User Borrowed Asset B : {}", borrow_amount);
     std::println!("[*] Balance sent to Incentives (Mint) : {}", balance_sent_on_borrow);
     
@@ -703,8 +710,12 @@ fn test_withdrawal_penalty_logic_flaw() {
         &setup.user,
     );
 
-    // VULNERABILITY TERBUKTI: Memeriksa saldo yang dikirim saat Repay
-    let balance_sent_on_repay = mock_client.get_intercepted_balance();
+    // VULNERABILITY TERBUKTI: Memeriksa saldo yang dikirim saat Repay menggunakan raw invoke
+    let balance_sent_on_repay: u128 = env.invoke_contract(
+        &mock_incentives_addr,
+        &Symbol::new(&env, "get_intercepted_balance"),
+        soroban_sdk::vec![&env],
+    );
     std::println!("[!] Balance sent to Incentives (Burn) : {} (POST-ACTION BALANCE!)", balance_sent_on_repay);
 
     std::println!("\n===============================================");
