@@ -631,7 +631,7 @@ fn test_withdrawal_penalty_logic_flaw_real_state() {
         &setup.admin,
         &setup.debt_token_b, // Asset parameter = token calling handle_action
         &reward_token,
-        1u32,                // REWARD_TYPE_BORROW
+        &1u32,                // REWARD_TYPE_BORROW
         &emission_rate,
         &0u64,               // No distribution end
     );
