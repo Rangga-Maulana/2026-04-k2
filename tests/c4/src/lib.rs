@@ -604,17 +604,15 @@ fn test_submission_validity() {
     );
 
     // =============================================================================
-// MOCK INCENTIVES CONTRACT: Intercepts and proves the Post-Action Balance bug
+// MOCK INCENTIVES CONTRACT (DILETAKKAN DI LUAR FUNGSI TEST AGAR TIDAK ERROR SCOPE)
 // =============================================================================
-// =============================================================================
-// MOCK INCENTIVES CONTRACT: Intercepts and proves the Post-Action Balance bug
-// =============================================================================
+use soroban_sdk::vec;
+
 #[contract]
 pub struct MockIncentives;
 
 #[contractimpl]
 impl MockIncentives {
-    // Menyadap `handle_action` untuk merekam saldo apa yang sebenarnya dikirim oleh Token
     pub fn handle_action(
         env: Env,
         _token_address: Address,
@@ -623,7 +621,6 @@ impl MockIncentives {
         user_balance: u128,
         _reward_type: u32,
     ) {
-        // Simpan saldo yang disadap ke storage untuk di-assert di PoC
         env.storage().instance().set(&Symbol::new(&env, "intercepted_balance"), &user_balance);
     }
 
@@ -639,8 +636,7 @@ impl MockIncentives {
 fn test_withdrawal_penalty_logic_flaw() {
     let env = Env::default();
     
-    // Bypass requirement otorisasi agar kita bisa menyuntikkan Mock Contract
-    env.mock_all_auths(); 
+    // Setup::new sudah otomatis memanggil env.mock_all_auths() di dalamnya
     let setup = Setup::new(&env);
 
     std::println!("\n===============================================");
@@ -650,16 +646,14 @@ fn test_withdrawal_penalty_logic_flaw() {
     // 1. Registrasi Mock Incentives
     let mock_incentives_addr = env.register(MockIncentives, ());
 
-    // FIX: Menggunakan 'debt_token_address' (K2 naming convention)
-    let reserve_data = setup.router.get_reserve_data(&setup.asset_b);
-    let debt_token_addr = reserve_data.debt_token_address;
+    // 2. Dapatkan alamat DebtToken untuk Asset B langsung dari struct Setup
+    let debt_token_addr = setup.debt_token_b.clone();
     
-    // Suntikkan Mock Incentives ke dalam DebtToken Asset B
-    // Membutuhkan caller = pool_address (setup.router.address)
+    // 3. Suntikkan Mock Incentives ke dalam DebtToken Asset B menggunakan Raw Invoke
     env.invoke_contract::<()>(
         &debt_token_addr,
         &Symbol::new(&env, "set_incentives_contract"),
-        soroban_sdk::vec![&env, setup.router.address.to_val(), mock_incentives_addr.to_val()],
+        vec![&env, setup.router_addr.to_val(), mock_incentives_addr.to_val()],
     );
 
     std::println!("[*] Mock Incentives Controller injected successfully.");
@@ -678,22 +672,21 @@ fn test_withdrawal_penalty_logic_flaw() {
         &setup.user,
         &setup.asset_b,
         &borrow_amount,
-        &1u32, // Variable rate
-        &0u32, // Referral
+        &1u32, 
+        &0u32, 
         &setup.user,
     );
 
-    // FIX: Bypass Macro Client, gunakan invoke_contract mentah (100% aman dari scoping error)
+    // Memeriksa saldo yang dikirim ke Incentives saat posisi Borrow dibuka
     let balance_sent_on_borrow: u128 = env.invoke_contract(
         &mock_incentives_addr,
         &Symbol::new(&env, "get_intercepted_balance"),
-        soroban_sdk::vec![&env],
+        vec![&env],
     );
     
     std::println!("[*] User Borrowed Asset B : {}", borrow_amount);
     std::println!("[*] Balance sent to Incentives (Mint) : {}", balance_sent_on_borrow);
     
-    // Memastikan DebtToken mengirim saldo yang benar saat Mint
     assert_eq!(balance_sent_on_borrow, borrow_amount, "Mint should send borrowed balance");
 
     std::println!("\n===============================================");
@@ -710,11 +703,11 @@ fn test_withdrawal_penalty_logic_flaw() {
         &setup.user,
     );
 
-    // VULNERABILITY TERBUKTI: Memeriksa saldo yang dikirim saat Repay menggunakan raw invoke
+    // VULNERABILITY TERBUKTI: Memeriksa saldo yang dikirim saat Repay
     let balance_sent_on_repay: u128 = env.invoke_contract(
         &mock_incentives_addr,
         &Symbol::new(&env, "get_intercepted_balance"),
-        soroban_sdk::vec![&env],
+        vec![&env],
     );
     std::println!("[!] Balance sent to Incentives (Burn) : {} (POST-ACTION BALANCE!)", balance_sent_on_repay);
 
@@ -722,14 +715,12 @@ fn test_withdrawal_penalty_logic_flaw() {
     std::println!("[+] POST-MORTEM STATE (IMPACT ANALYSIS)");
     std::println!("===============================================");
     
-    // Mendemonstrasikan cacat matematika di real IncentivesContract
     let old_balance = balance_sent_on_borrow;
     let new_balance = balance_sent_on_repay;
     
     std::println!("[!] The real IncentivesContract calculates rewards using:");
     std::println!("[!] balance_for_rewards = min(old_balance, new_balance)");
     
-    // Simulasi kalkulasi yang terjadi di IncentivesContract
     let balance_for_rewards = old_balance.min(new_balance);
     
     std::println!("[!] Math execution : min({}, {}) = {}", old_balance, new_balance, balance_for_rewards);
@@ -737,7 +728,7 @@ fn test_withdrawal_penalty_logic_flaw() {
     std::println!("[!] 100% of the rewards accrued during the holding period are permanently LOST.");
     std::println!("===============================================\n");
     
-    // Assertion final untuk membuktikan bug valid (Jika gagal, berarti bug sudah di-patch)
+    // Assertion final
     assert_eq!(balance_sent_on_repay, 0, "Bug fixed? Expected 0 balance sent to incentives.");
 }
 
